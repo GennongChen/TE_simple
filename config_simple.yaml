@@ -1,0 +1,134 @@
+# 最简版配置：只含 E1–E7 pilot 所需；完整版见 ../config_TE_exonization.yaml
+schema_version: "simple-1.0"
+project:
+  name: TE_exonization_simple
+  purpose: pilot_pipeline_validation_and_shortlist
+  positive_control: IFNAR2-S
+  control_transcript: ENST00000404220.7   # E9-Alu alternative terminal exon
+  negative_flow_control: e2_absent_event
+  classification_control: utr_only_event
+runtime:
+  environment_manager: mamba
+  environment_name: seurat5
+  allow_environment_changes: false
+  threads: 8
+  download_size_limit_mb: 100   # 超过需人工确认
+  seed: 20261028
+references:
+  assembly: GRCh38
+  gencode_release: "44"
+  gtf: refs/gencode.v44.primary_assembly.annotation.gtf
+  fasta: refs/GRCh38.primary_assembly.genome.fa
+  gtf_url: https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44/gencode.v44.primary_assembly.annotation.gtf.gz
+  fasta_url: https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44/GRCh38.primary_assembly.genome.fa.gz
+  rmsk_bed: refs/hg38.rmsk.bed.gz
+  rmsk_source: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/rmsk.txt.gz
+  chain_hg38_mm39: refs/hg38ToMm39.over.chain.gz
+  chain_url: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/mm39/hg38ToMm39.over.chain.gz
+datasets:
+  TRAILS:
+    enabled: true
+    gtf: data/TRAILS.gtf.gz
+    isoform_info: data/isoform_info.txt.gz
+    male_pbmc_gtf: data/male_PBMC.gtf.gz
+    base_url: https://github.com/juninamo/TRAILS
+  GTEX_LR:
+    enabled: true
+    flair_gtf: data/flair_filter_transcripts.gtf.gz
+    flair_url: https://storage.googleapis.com/gtex_analysis_v9/long_read_data/flair_filter_transcripts.gtf.gz
+  VOLDEN_PRIMARY:                        # E5 主路：重跑 + CellTypist
+    enabled: true
+    sra_bioproject: PRJNA599962
+    design: 10x_chromium_3prime_split_illumina_r2c2_ont
+    cells_total: 2974
+    replicates: 2
+    author_code: https://github.com/rvolden/10xR2C2   # ExtractUMIs/MergeUMIs + 解复用
+    c3poa_version: "2.2.2"
+    whitelist_strategy: data_driven_top_1500_barcodes
+    demux_rule: levenshtein_L1_lt_3_and_L1_lt_L2_minus_1
+    expected_demux_rate: 0.81            # 论文量级，显著偏低 = 参数问题
+    illumina_counts_tool: cellranger     # 或 kb-python/STARsolo，preflight 确认可用者
+    seurat_qc: {min_features: 200, max_features: 2500, max_pct_mt: 5}
+    celltypist:
+      python_package: celltypist
+      model: Immune_All_Low
+      label_transfer: barcode_match_to_ont   # 99.1% R2C2 细胞在 Illumina 中
+      cd8_review_markers: [CD8A, CD8B]     # CD8 标签必须 marker 共表达复核
+      low_confidence_flag: true
+    bambu_version: "3.8.1"
+    bambu_run_1_annotation: data/TRAILS.gtf.gz   # 按类型合成 bulk 后定量，不开 discovery
+    bambu_run_2_annotation: Ensembl113_discovery_qc  # QC：B/T/单核转录本数应与论文 Table 2 同量级
+    inference: none          # ~3000 细胞低深度，只描述；2 重复仅 QC 一致性
+  DOYLE_BACKUP_TIER1:                    # E5 备选 tier 1：作者矩阵 ID 匹配（触发条件见 workflow E5-alt）
+    enabled: false
+    zenodo_record: https://zenodo.org/records/17341210   # 最新版本 17372869
+    # 已核实：无 extended annotation GTF；BambuTx 无坐标
+    counts_gene: data/PBMC_bambu_quant_PBMC1_combined_counts_gene.txt
+    counts_transcript: data/PBMC_bambu_quant_PBMC1_combined_counts_transcript.txt
+    cpm_transcript: data/PBMC_bambu_quant_PBMC1_combined_CPM_transcript.txt
+    reference_gff3: data/Homo_sapiens.GRCh38.113.gff3.gz
+    count_semantics: raw_counts_and_cpm    # tar 内未压缩达 ~42 GB/矩阵，流式读
+    annotation_strategy: ensembl_id_match_only
+    biological_donors: 1
+    technical_replicates: 2
+  DOYLE_BACKUP_TIER2:                    # E5 备选 tier 2：PRJNA1432415 重跑（CD8 亚群分辨率）
+    enabled: false
+    sra_bioproject: PRJNA1432415         # 2 run（各 3 flow cell 合并），~4.9 亿 raw reads
+    runs_manifest: null                  # V0 对应步骤拉 run 列表核对后填写
+    demux_pipeline: https://github.com/UK-SBCoA-EbbertLab/single_cell_nextflow_pipeline  # Step 0
+    barcode_rescue_preprint: https://www.biorxiv.org/content/10.1101/2025.10.16.682832v1
+    pipseeker_version: "02.01.04"        # Fluent/Illumina 软件，whitelist 随其分发；不可获取则 tier2 blocked
+    barcode_rescue: java_levenshtein_tiered
+    basecaller: dorado_super_accurate    # 仅当拿到 POD5；有 fastq 则跳过
+    minimap2_version: "2.28"
+    minimap2_preset: splice
+    mapq_min: 10
+    drop_secondary_supplementary: true
+    bambu_version: "3.8.1"
+    bambu_run_1_annotation: data/TRAILS.gtf.gz
+    bambu_run_2_annotation: data/Homo_sapiens.GRCh38.113.gff3.gz  # discovery QC，应回收 ~126 novel isoform
+    merge_technical_replicates: true
+    resource_gate:
+      min_ram_gb: 64
+      chunk_by: flow_cell
+      pilot_first_flow_cell: true
+      checkpoint_per_flow_cell: true
+catalog:
+  min_overlap_bp: 1
+  compute_both_denominators: true
+  keep_all_events: true
+  event_types: [cassette_exon, alt_donor, alt_acceptor, alt_terminal_exon, te_tss, intron_retention, utr_only, internal_overlap, unresolved]
+  evidence_statuses: [supported, not_detected, not_testable, not_applicable, blocked, failed]
+orf:
+  transdecoder_min_aa: 40
+  keep_partial: true
+  nmd_stop_distance_gt_nt: 50
+hla:
+  enabled: false          # 无本地许可/allele 列表则整步 blocked
+  netmhcpan_path: null
+  peptide_lengths: [8, 9, 10, 11]
+  strong_rank_lt: 0.5
+  weak_rank_lt: 2.0
+  alleles: []
+doyle:
+  use_author_processed_only: true
+  merge_technical_replicates: true
+  detection_metric: cells_with_transcript_count_gt_zero
+  inference: none          # 单供者，只描述
+evolution:
+  liftover_min_match: 0.95
+  failure_label: unresolved
+  expected_control: syntenic_absence_supported   # IFNAR2-S
+function:
+  immune_go_ids: ["GO:0006955", "GO:0006954", "GO:0034097", "GO:0005125", "GO:0001816", "GO:0001817", "GO:0032606", "GO:0060337", "GO:0034340"]
+  use_go_id_current_names: true
+  enrichment: none
+ranking:
+  method: lexicographic
+  keys: [structure_clear, e2_exact, orf_complete_non_nmd, doyle_cd8_detected, immune_go_hit, e6_unresolved_or_absent]
+  max_targets: 20
+  min_targets: 5
+validation:
+  ifnar2_regression_required: true
+  control_rows: 3
+  knockout_design: out_of_scope   # 下一轮
